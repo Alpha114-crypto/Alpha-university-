@@ -1,0 +1,162 @@
+-- Alpha University Student Portal — Database Schema
+-- PostgreSQL
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Users (base identity for all roles)
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('student', 'lecturer', 'admin', 'registrar', 'finance')),
+    mfa_enabled BOOLEAN DEFAULT FALSE,
+    mfa_secret VARCHAR(255),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Students
+CREATE TABLE students (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    student_number VARCHAR(20) UNIQUE NOT NULL,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    date_of_birth DATE,
+    enrollment_status VARCHAR(20) DEFAULT 'active' CHECK (enrollment_status IN ('active', 'suspended', 'graduated', 'withdrawn')),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Lecturers
+CREATE TABLE lecturers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    department VARCHAR(100),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Courses
+CREATE TABLE courses (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    code VARCHAR(20) UNIQUE NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    credits INTEGER NOT NULL DEFAULT 3,
+    department VARCHAR(100),
+    lecturer_id UUID REFERENCES lecturers(id),
+    capacity INTEGER DEFAULT 50,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Course prerequisites (self-referencing many-to-many)
+CREATE TABLE course_prerequisites (
+    course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
+    prerequisite_course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
+    PRIMARY KEY (course_id, prerequisite_course_id)
+);
+
+-- Enrollments
+CREATE TABLE enrollments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    course_id UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    semester VARCHAR(20) NOT NULL,
+    status VARCHAR(20) DEFAULT 'enrolled' CHECK (status IN ('enrolled', 'dropped', 'completed')),
+    enrolled_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(student_id, course_id, semester)
+);
+
+-- Grades
+CREATE TABLE grades (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    enrollment_id UUID NOT NULL REFERENCES enrollments(id) ON DELETE CASCADE,
+    score DECIMAL(5,2),
+    grade_letter VARCHAR(2),
+    recorded_by UUID REFERENCES lecturers(id),
+    recorded_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Attendance
+CREATE TABLE attendance (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    enrollment_id UUID NOT NULL REFERENCES enrollments(id) ON DELETE CASCADE,
+    session_date DATE NOT NULL,
+    status VARCHAR(10) CHECK (status IN ('present', 'absent', 'late', 'excused')),
+    recorded_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Assignments
+CREATE TABLE assignments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    due_date TIMESTAMP,
+    max_score DECIMAL(5,2) DEFAULT 100,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Submissions
+CREATE TABLE submissions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    assignment_id UUID NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+    student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    file_url VARCHAR(500),
+    submitted_at TIMESTAMP DEFAULT NOW(),
+    score DECIMAL(5,2),
+    feedback TEXT,
+    UNIQUE(assignment_id, student_id)
+);
+
+-- Invoices
+CREATE TABLE invoices (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    amount DECIMAL(10,2) NOT NULL,
+    due_date DATE,
+    status VARCHAR(20) DEFAULT 'unpaid' CHECK (status IN ('unpaid', 'paid', 'overdue', 'cancelled')),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Payments
+CREATE TABLE payments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    invoice_id UUID NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    amount DECIMAL(10,2) NOT NULL,
+    method VARCHAR(50),
+    transaction_ref VARCHAR(255),
+    paid_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Announcements
+CREATE TABLE announcements (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    author_id UUID NOT NULL REFERENCES users(id),
+    scope VARCHAR(20) DEFAULT 'school' CHECK (scope IN ('school', 'department', 'course')),
+    course_id UUID REFERENCES courses(id),
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Audit log
+CREATE TABLE audit_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id),
+    action VARCHAR(100) NOT NULL,
+    entity_type VARCHAR(50),
+    entity_id UUID,
+    details JSONB,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Indexes for common lookups
+CREATE INDEX idx_enrollments_student ON enrollments(student_id);
+CREATE INDEX idx_enrollments_course ON enrollments(course_id);
+CREATE INDEX idx_grades_enrollment ON grades(enrollment_id);
+CREATE INDEX idx_attendance_enrollment ON attendance(enrollment_id);
+CREATE INDEX idx_submissions_assignment ON submissions(assignment_id);
+CREATE INDEX idx_invoices_student ON invoices(student_id);
